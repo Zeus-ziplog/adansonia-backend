@@ -1,18 +1,18 @@
-@'
 {
   "compilerOptions": {
-    "noImplicitAny": false,
-    "strict": false,
-    "skipLibCheck": true,
-    "outDir": "./dist",
-    "rootDir": "./",
+    "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "target": "ES2020",
+    "outDir": "./dist",
+    "rootDir": "./",
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
     "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
     "allowJs": true
   },
   "include": ["**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
-'@ | Out-File -FilePath tsconfig.json -Encoding utf8
