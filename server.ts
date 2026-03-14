@@ -20,6 +20,7 @@ import Insight from './models/Insight.js';
 import Capability from './models/Capability.js';
 import CaseStudy from './models/CaseStudy.js';
 import ContactMessage from './models/ContactMessage.js';
+
 dotenv.config();
 
 const app = express();
@@ -49,7 +50,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'your-session-secret',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: process.env.NODE_ENV === 'production' } // secure in production
+  cookie: { secure: process.env.NODE_ENV === 'production' }
 }));
 
 app.use(passport.initialize());
@@ -84,12 +85,17 @@ passport.use(new GoogleStrategy({
   },
   async (accessToken, refreshToken, profile, done) => {
     try {
+      console.log('📩 Google OAuth profile received:', JSON.stringify(profile, null, 2));
       const email = profile.emails?.[0]?.value;
       const avatar = profile.photos?.[0]?.value;
-      if (!email) return done(null, false, { message: 'No email from Google' });
+      if (!email) {
+        console.error('❌ No email in Google profile');
+        return done(null, false, { message: 'No email from Google' });
+      }
 
       let admin = await Admin.findOne({ email });
       if (!admin) {
+        console.log('❓ No admin found for email:', email);
         // If you want to auto‑register Google users, uncomment below
         // admin = new Admin({ email, avatar, googleId: profile.id });
         // await admin.save();
@@ -100,10 +106,13 @@ passport.use(new GoogleStrategy({
         admin.avatar = avatar;
         if (!admin.googleId) admin.googleId = profile.id;
         await admin.save();
+        console.log('✏️ Updated admin with avatar/googleId:', admin.email);
       }
 
+      console.log('✅ Admin authenticated:', admin.email);
       return done(null, admin);
     } catch (err) {
+      console.error('🔥 Error in Google OAuth strategy:', err);
       return done(err as Error);
     }
   }
@@ -149,6 +158,7 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<void> =
     );
     res.json({ token, email: admin.email, avatar: admin.avatar });
   } catch (err) {
+    console.error('Login error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -164,15 +174,25 @@ app.get('/api/auth/google/callback',
     session: false 
   }),
   (req: Request, res: Response) => {
-    const user = req.user as any;
-    const token = jwt.sign(
-      { id: user.id, email: user.email, avatar: user.avatar },
-      SECRET_KEY,
-      { expiresIn: '7d' }
-    );
-    res.redirect(
-      `${ADMIN_FRONTEND_URL}/login?token=${token}&email=${encodeURIComponent(user.email)}&avatar=${encodeURIComponent(user.avatar || '')}`
-    );
+    try {
+      const user = req.user as any;
+      if (!user) {
+        console.error('❌ No user after Google authentication');
+        return res.status(500).json({ error: 'Authentication failed' });
+      }
+      const token = jwt.sign(
+        { id: user.id, email: user.email, avatar: user.avatar },
+        SECRET_KEY,
+        { expiresIn: '7d' }
+      );
+      console.log('✅ Google OAuth success, redirecting to frontend with token');
+      res.redirect(
+        `${ADMIN_FRONTEND_URL}/login?token=${token}&email=${encodeURIComponent(user.email)}&avatar=${encodeURIComponent(user.avatar || '')}`
+      );
+    } catch (err) {
+      console.error('🔥 Error in callback handler:', err);
+      res.status(500).json({ error: 'Internal server error' });
+    }
   }
 );
 
@@ -200,6 +220,7 @@ app.post('/api/admin/register', verifyToken, async (req: Request, res: Response)
 
     res.json({ success: true, email: newAdmin.email });
   } catch (err) {
+    console.error('Admin registration error:', err);
     res.status(500).json({ error: 'Failed to create admin' });
   }
 });
@@ -209,6 +230,7 @@ app.get('/api/admin/admins', verifyToken, async (req: Request, res: Response) =>
     const admins = await Admin.find().select('-password');
     res.json(admins);
   } catch (err) {
+    console.error('Fetch admins error:', err);
     res.status(500).json({ error: 'Failed to fetch admins' });
   }
 });
@@ -219,6 +241,7 @@ app.delete('/api/admin/admins/:id', verifyToken, async (req: Request, res: Respo
     if (!result) return res.status(404).json({ error: 'Not found' });
     res.json({ success: true });
   } catch (err) {
+    console.error('Delete admin error:', err);
     res.status(500).json({ error: 'Failed to delete admin' });
   }
 });
@@ -229,6 +252,7 @@ app.get('/api/staff', async (req, res) => {
     const staff = await Staff.find().sort({ priority: 1 });
     res.json(staff);
   } catch (err) {
+    console.error('Fetch staff error:', err);
     res.status(500).json({ error: 'Failed to fetch staff' });
   }
 });
@@ -239,6 +263,7 @@ app.get('/api/staff/:id', async (req, res) => {
     if (!member) return res.status(404).json({ error: 'Not found' });
     res.json(member);
   } catch (err) {
+    console.error('Fetch staff by id error:', err);
     res.status(500).json({ error: 'Invalid ID or server error' });
   }
 });
@@ -248,6 +273,7 @@ app.get('/api/admin/staff', verifyToken, async (req, res) => {
     const staff = await Staff.find().sort({ priority: 1 });
     res.json(staff);
   } catch (err) {
+    console.error('Fetch admin staff error:', err);
     res.status(500).json({ error: 'Failed to fetch staff' });
   }
 });
@@ -277,7 +303,7 @@ app.post('/api/admin/staff', verifyToken, async (req, res) => {
     await newStaff.save();
     res.json(newStaff);
   } catch (err) {
-    console.error(err);
+    console.error('Create staff error:', err);
     res.status(500).json({ error: 'Failed to create staff' });
   }
 });
@@ -300,6 +326,7 @@ app.put('/api/admin/staff/:id', verifyToken, async (req, res) => {
     if (!updated) return res.status(404).json({ error: 'Not found' });
     res.json(updated);
   } catch (err) {
+    console.error('Update staff error:', err);
     res.status(500).json({ error: 'Failed to update staff' });
   }
 });
@@ -310,6 +337,7 @@ app.delete('/api/admin/staff/:id', verifyToken, async (req, res) => {
     if (!deleted) return res.status(404).json({ error: 'Not found' });
     res.json({ success: true });
   } catch (err) {
+    console.error('Delete staff error:', err);
     res.status(500).json({ error: 'Failed to delete staff' });
   }
 });
@@ -320,6 +348,7 @@ app.get('/api/testimonials', async (req, res) => {
     const testimonials = await Testimonial.find();
     res.json(testimonials);
   } catch (err) {
+    console.error('Fetch testimonials error:', err);
     res.status(500).json({ error: 'Failed to fetch testimonials' });
   }
 });
@@ -330,6 +359,7 @@ app.get('/api/testimonials/:id', async (req, res) => {
     if (!item) return res.status(404).json({ error: 'Not found' });
     res.json(item);
   } catch (err) {
+    console.error('Fetch testimonial by id error:', err);
     res.status(500).json({ error: 'Invalid ID' });
   }
 });
@@ -339,6 +369,7 @@ app.get('/api/admin/testimonials', verifyToken, async (req, res) => {
     const testimonials = await Testimonial.find();
     res.json(testimonials);
   } catch (err) {
+    console.error('Fetch admin testimonials error:', err);
     res.status(500).json({ error: 'Failed to fetch testimonials' });
   }
 });
@@ -351,6 +382,7 @@ app.post('/api/admin/testimonials', verifyToken, async (req, res) => {
     await newItem.save();
     res.json(newItem);
   } catch (err) {
+    console.error('Create testimonial error:', err);
     res.status(500).json({ error: 'Failed to create testimonial' });
   }
 });
@@ -361,6 +393,7 @@ app.put('/api/admin/testimonials/:id', verifyToken, async (req, res) => {
     if (!updated) return res.status(404).json({ error: 'Not found' });
     res.json(updated);
   } catch (err) {
+    console.error('Update testimonial error:', err);
     res.status(500).json({ error: 'Failed to update testimonial' });
   }
 });
@@ -371,6 +404,7 @@ app.delete('/api/admin/testimonials/:id', verifyToken, async (req, res) => {
     if (!deleted) return res.status(404).json({ error: 'Not found' });
     res.json({ success: true });
   } catch (err) {
+    console.error('Delete testimonial error:', err);
     res.status(500).json({ error: 'Failed to delete testimonial' });
   }
 });
@@ -381,6 +415,7 @@ app.get('/api/insights', async (req, res) => {
     const insights = await Insight.find().sort({ published_date: -1 });
     res.json(insights);
   } catch (err) {
+    console.error('Fetch insights error:', err);
     res.status(500).json({ error: 'Failed to fetch insights' });
   }
 });
@@ -391,6 +426,7 @@ app.get('/api/insights/:id', async (req, res) => {
     if (!insight) return res.status(404).json({ error: 'Not found' });
     res.json(insight);
   } catch (err) {
+    console.error('Fetch insight by id error:', err);
     res.status(500).json({ error: 'Invalid ID' });
   }
 });
@@ -400,6 +436,7 @@ app.get('/api/admin/insights', verifyToken, async (req, res) => {
     const insights = await Insight.find().sort({ published_date: -1 });
     res.json(insights);
   } catch (err) {
+    console.error('Fetch admin insights error:', err);
     res.status(500).json({ error: 'Failed to fetch insights' });
   }
 });
@@ -429,7 +466,7 @@ app.post('/api/admin/insights', verifyToken, async (req, res) => {
     await newInsight.save();
     res.json(newInsight);
   } catch (err) {
-    console.error(err);
+    console.error('Create insight error:', err);
     res.status(500).json({ error: 'Failed to create insight' });
   }
 });
@@ -451,6 +488,7 @@ app.put('/api/admin/insights/:id', verifyToken, async (req, res) => {
     if (!updated) return res.status(404).json({ error: 'Not found' });
     res.json(updated);
   } catch (err) {
+    console.error('Update insight error:', err);
     res.status(500).json({ error: 'Failed to update insight' });
   }
 });
@@ -461,6 +499,7 @@ app.delete('/api/admin/insights/:id', verifyToken, async (req, res) => {
     if (!deleted) return res.status(404).json({ error: 'Not found' });
     res.json({ success: true });
   } catch (err) {
+    console.error('Delete insight error:', err);
     res.status(500).json({ error: 'Failed to delete insight' });
   }
 });
@@ -471,6 +510,7 @@ app.get('/api/capabilities', async (req, res) => {
     const caps = await Capability.find().sort({ priority: 1 });
     res.json(caps);
   } catch (err) {
+    console.error('Fetch capabilities error:', err);
     res.status(500).json({ error: 'Failed to fetch capabilities' });
   }
 });
@@ -481,6 +521,7 @@ app.get('/api/capabilities/:id', async (req, res) => {
     if (!item) return res.status(404).json({ error: 'Not found' });
     res.json(item);
   } catch (err) {
+    console.error('Fetch capability by id error:', err);
     res.status(500).json({ error: 'Invalid ID' });
   }
 });
@@ -490,6 +531,7 @@ app.get('/api/admin/capabilities', verifyToken, async (req, res) => {
     const caps = await Capability.find().sort({ priority: 1 });
     res.json(caps);
   } catch (err) {
+    console.error('Fetch admin capabilities error:', err);
     res.status(500).json({ error: 'Failed to fetch capabilities' });
   }
 });
@@ -502,6 +544,7 @@ app.post('/api/admin/capabilities', verifyToken, async (req, res) => {
     await newItem.save();
     res.json(newItem);
   } catch (err) {
+    console.error('Create capability error:', err);
     res.status(500).json({ error: 'Failed to create capability' });
   }
 });
@@ -512,6 +555,7 @@ app.put('/api/admin/capabilities/:id', verifyToken, async (req, res) => {
     if (!updated) return res.status(404).json({ error: 'Not found' });
     res.json(updated);
   } catch (err) {
+    console.error('Update capability error:', err);
     res.status(500).json({ error: 'Failed to update capability' });
   }
 });
@@ -522,6 +566,7 @@ app.delete('/api/admin/capabilities/:id', verifyToken, async (req, res) => {
     if (!deleted) return res.status(404).json({ error: 'Not found' });
     res.json({ success: true });
   } catch (err) {
+    console.error('Delete capability error:', err);
     res.status(500).json({ error: 'Failed to delete capability' });
   }
 });
@@ -532,6 +577,7 @@ app.get('/api/case-studies', async (req, res) => {
     const studies = await CaseStudy.find();
     res.json(studies);
   } catch (err) {
+    console.error('Fetch case studies error:', err);
     res.status(500).json({ error: 'Failed to fetch case studies' });
   }
 });
@@ -542,6 +588,7 @@ app.get('/api/case-studies/:id', async (req, res) => {
     if (!item) return res.status(404).json({ error: 'Not found' });
     res.json(item);
   } catch (err) {
+    console.error('Fetch case study by id error:', err);
     res.status(500).json({ error: 'Invalid ID' });
   }
 });
@@ -551,6 +598,7 @@ app.get('/api/admin/case-studies', verifyToken, async (req, res) => {
     const studies = await CaseStudy.find();
     res.json(studies);
   } catch (err) {
+    console.error('Fetch admin case studies error:', err);
     res.status(500).json({ error: 'Failed to fetch case studies' });
   }
 });
@@ -579,6 +627,7 @@ app.post('/api/admin/case-studies', verifyToken, async (req, res) => {
     await newItem.save();
     res.json(newItem);
   } catch (err) {
+    console.error('Create case study error:', err);
     res.status(500).json({ error: 'Failed to create case study' });
   }
 });
@@ -600,6 +649,7 @@ app.put('/api/admin/case-studies/:id', verifyToken, async (req, res) => {
     if (!updated) return res.status(404).json({ error: 'Not found' });
     res.json(updated);
   } catch (err) {
+    console.error('Update case study error:', err);
     res.status(500).json({ error: 'Failed to update case study' });
   }
 });
@@ -610,6 +660,7 @@ app.delete('/api/admin/case-studies/:id', verifyToken, async (req, res) => {
     if (!deleted) return res.status(404).json({ error: 'Not found' });
     res.json({ success: true });
   } catch (err) {
+    console.error('Delete case study error:', err);
     res.status(500).json({ error: 'Failed to delete case study' });
   }
 });
@@ -623,6 +674,7 @@ app.post('/api/contact', async (req, res) => {
     await newMessage.save();
     res.json({ success: true, id: newMessage.id });
   } catch (err) {
+    console.error('Contact form error:', err);
     res.status(500).json({ error: 'Failed to send message' });
   }
 });
@@ -632,6 +684,7 @@ app.get('/api/admin/contact', verifyToken, async (req, res) => {
     const messages = await ContactMessage.find().sort({ created_at: -1 });
     res.json(messages);
   } catch (err) {
+    console.error('Fetch messages error:', err);
     res.status(500).json({ error: 'Failed to fetch messages' });
   }
 });
@@ -642,6 +695,7 @@ app.delete('/api/admin/contact/:id', verifyToken, async (req, res) => {
     if (!deleted) return res.status(404).json({ error: 'Not found' });
     res.json({ success: true });
   } catch (err) {
+    console.error('Delete message error:', err);
     res.status(500).json({ error: 'Failed to delete message' });
   }
 });
