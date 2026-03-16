@@ -29,7 +29,8 @@
     "mongoose": "^9.2.4",
     "openai": "^6.25.0",
     "passport": "^0.7.0",
-    "passport-google-oauth20": "^2.0.0"
+    "passport-google-oauth20": "^2.0.0",
+    "serverless-http": "^4.0.0"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",

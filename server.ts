@@ -11,8 +11,9 @@ import session from 'express-session';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import mongoose from 'mongoose';
+import serverless from 'serverless-http'; // 👈 new import
 
-// Import Mongoose models (add .js extension for ES module resolution)
+// Import Mongoose models
 import Admin from './models/Admin.js';
 import Staff from './models/Staff.js';
 import Testimonial from './models/Testimonial.js';
@@ -56,7 +57,7 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Directory setup for uploads
+// Directory setup for uploads (only used locally)
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 app.use('/uploads', express.static(uploadsDir));
@@ -748,8 +749,19 @@ If the question is about a specific topic, try to include a relevant page sugges
   }
 });
 
-// ========== START SERVER ==========
-app.listen(PORT, () => {
-  console.log(`✅ ADANSONIA Backend running on http://localhost:${PORT}`);
-  console.log(`🖼️  Uploads Directory: ${uploadsDir}`);
+// ========== Global error handler (optional) ==========
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  console.error('🔥 Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
+
+// ========== Export serverless handler ==========
+export const handler = serverless(app);
+
+// ========== Start local server for development ==========
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`✅ Local backend running on http://localhost:${PORT}`);
+    console.log(`🖼️  Uploads Directory: ${uploadsDir}`);
+  });
+}
