@@ -11,7 +11,7 @@ import session from 'express-session';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import mongoose from 'mongoose';
-import serverless from 'serverless-http'; // 👈 new import
+import serverless from 'serverless-http';
 
 // Import Mongoose models
 import Admin from './models/Admin.js';
@@ -56,6 +56,11 @@ app.use(session({
 
 app.use(passport.initialize());
 app.use(passport.session());
+
+// ========== TEST ROUTE FOR DEPLOYMENT VERIFICATION ==========
+app.get('/', (req, res) => {
+  res.send('✅ Adansonia backend is live on Vercel!');
+});
 
 // Directory setup for uploads (only used locally)
 const uploadsDir = path.join(__dirname, 'uploads');
