@@ -47,6 +47,7 @@ mongoose.connect(MONGODB_URI)
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
+// Use a real session store in production (like connect-mongo) – for now, this warning is okay
 app.use(session({
   secret: process.env.SESSION_SECRET || 'your-session-secret',
   resave: false,
@@ -62,9 +63,17 @@ app.get('/', (req, res) => {
   res.send('✅ Adansonia backend is live on Vercel!');
 });
 
-// Directory setup for uploads (only used locally)
+// ========== Uploads directory – handle gracefully on Vercel ==========
 const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+try {
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+    console.log('✅ Uploads directory created at', uploadsDir);
+  }
+} catch (err) {
+  console.warn('⚠️ Could not create uploads directory. File uploads will not work on Vercel.', err);
+}
+// Still serve static files if the folder exists (won't on Vercel)
 app.use('/uploads', express.static(uploadsDir));
 
 // ========== Auth Middleware ==========
@@ -102,9 +111,6 @@ passport.use(new GoogleStrategy({
       let admin = await Admin.findOne({ email });
       if (!admin) {
         console.log('❓ No admin found for email:', email);
-        // If you want to auto‑register Google users, uncomment below
-        // admin = new Admin({ email, avatar, googleId: profile.id });
-        // await admin.save();
         return done(null, false, { message: 'Admin not found' });
       }
 
@@ -284,7 +290,13 @@ app.get('/api/admin/staff', verifyToken, async (req, res) => {
   }
 });
 
+// Disable file upload endpoints on Vercel – they need cloud storage
+const isVercel = process.env.VERCEL === '1';
+
 app.post('/api/admin/staff', verifyToken, async (req, res) => {
+  if (isVercel) {
+    return res.status(501).json({ error: 'File uploads not supported on Vercel. Please use cloud storage.' });
+  }
   try {
     const { name, email, image_base64, bio, priority, role, expertise } = req.body;
     if (!name) return res.status(400).json({ error: 'Name required' });
@@ -315,6 +327,9 @@ app.post('/api/admin/staff', verifyToken, async (req, res) => {
 });
 
 app.put('/api/admin/staff/:id', verifyToken, async (req, res) => {
+  if (isVercel) {
+    return res.status(501).json({ error: 'File uploads not supported on Vercel. Please use cloud storage.' });
+  }
   try {
     const { image_base64, ...rest } = req.body;
     let imageUrl;
@@ -448,6 +463,9 @@ app.get('/api/admin/insights', verifyToken, async (req, res) => {
 });
 
 app.post('/api/admin/insights', verifyToken, async (req, res) => {
+  if (isVercel) {
+    return res.status(501).json({ error: 'File uploads not supported on Vercel. Please use cloud storage.' });
+  }
   try {
     const { title, content, published_date, published, category, tags, image_base64 } = req.body;
     if (!title || !content) return res.status(400).json({ error: 'Title and content required' });
@@ -478,6 +496,9 @@ app.post('/api/admin/insights', verifyToken, async (req, res) => {
 });
 
 app.put('/api/admin/insights/:id', verifyToken, async (req, res) => {
+  if (isVercel) {
+    return res.status(501).json({ error: 'File uploads not supported on Vercel. Please use cloud storage.' });
+  }
   try {
     const { image_base64, ...rest } = req.body;
     let imageUrl;
@@ -610,6 +631,9 @@ app.get('/api/admin/case-studies', verifyToken, async (req, res) => {
 });
 
 app.post('/api/admin/case-studies', verifyToken, async (req, res) => {
+  if (isVercel) {
+    return res.status(501).json({ error: 'File uploads not supported on Vercel. Please use cloud storage.' });
+  }
   try {
     const { title, description, practiceArea, image_base64, client, outcome } = req.body;
     if (!title || !description) return res.status(400).json({ error: 'Title and description required' });
@@ -639,6 +663,9 @@ app.post('/api/admin/case-studies', verifyToken, async (req, res) => {
 });
 
 app.put('/api/admin/case-studies/:id', verifyToken, async (req, res) => {
+  if (isVercel) {
+    return res.status(501).json({ error: 'File uploads not supported on Vercel. Please use cloud storage.' });
+  }
   try {
     const { image_base64, ...rest } = req.body;
     let imageUrl;
