@@ -10,45 +10,19 @@ import dotenv from 'dotenv';
 import session from 'express-session';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
-import mongoose from 'mongoose';
 import serverless from 'serverless-http';
-
-// Import Mongoose models
-import Admin from './models/Admin.js';
-import Staff from './models/Staff.js';
-import Testimonial from './models/Testimonial.js';
-import Insight from './models/Insight.js';
-import Capability from './models/Capability.js';
-import CaseStudy from './models/CaseStudy.js';
-import ContactMessage from './models/ContactMessage.js';
+import { PrismaClient } from '@prisma/client';
 
 dotenv.config();
 
 const app = express();
+const prisma = new PrismaClient();
 const PORT = process.env.PORT || 5000;
 const SECRET_KEY = process.env.JWT_SECRET || 'adansonia-secret-key-2024';
 const ADMIN_FRONTEND_URL = process.env.ADMIN_FRONTEND_URL || 'http://localhost:5173';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// ========== MongoDB Connection with Timeout ==========
-const MONGODB_URI = process.env.MONGODB_URI;
-if (!MONGODB_URI) {
-  console.error('❌ MONGODB_URI environment variable is not defined');
-  // Don't exit – we'll handle it in requests
-} else {
-  // Set connection timeout to 10 seconds
-  mongoose.connect(MONGODB_URI, {
-    serverSelectionTimeoutMS: 10000, // Timeout after 10s
-    socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
-  })
-    .then(() => console.log('✅ Connected to MongoDB'))
-    .catch(err => {
-      console.error('❌ MongoDB connection error:', err.message);
-      // Don't exit – let the function start, but requests will fail gracefully
-    });
-}
 
 // ========== Middleware ==========
 app.use(cors());
@@ -66,14 +40,10 @@ app.use(passport.session());
 
 // ========== TEST ROUTE ==========
 app.get('/', (req, res) => {
-  // Check if MongoDB is connected
-  if (mongoose.connection.readyState !== 1) {
-    return res.status(503).json({ error: 'Database not connected' });
-  }
   res.send('✅ Adansonia backend is live on Vercel!');
 });
 
-// ========== Uploads directory – handle gracefully ==========
+// ========== Uploads directory – handle gracefully on Vercel ==========
 const uploadsDir = path.join(__dirname, 'uploads');
 try {
   if (!fs.existsSync(uploadsDir)) {
@@ -84,17 +54,6 @@ try {
   console.warn('⚠️ Could not create uploads directory. File uploads will not work on Vercel.', err);
 }
 app.use('/uploads', express.static(uploadsDir));
-
-// ========== Middleware to check DB connection for API routes ==========
-const checkDbConnection = (req: Request, res: Response, next: NextFunction) => {
-  if (mongoose.connection.readyState !== 1) {
-    return res.status(503).json({ error: 'Database not connected' });
-  }
-  next();
-};
-
-// Apply DB check to all API routes (except maybe auth routes that don't need DB? but most do)
-app.use('/api', checkDbConnection);
 
 // ========== Auth Middleware ==========
 const verifyToken = (req: Request, res: Response, next: NextFunction): void => {
@@ -128,16 +87,17 @@ passport.use(new GoogleStrategy({
         return done(null, false, { message: 'No email from Google' });
       }
 
-      let admin = await Admin.findOne({ email });
+      let admin = await prisma.admin.findUnique({ where: { email } });
       if (!admin) {
         console.log('❓ No admin found for email:', email);
         return done(null, false, { message: 'Admin not found' });
       }
 
       if (!admin.avatar || admin.avatar !== avatar) {
-        admin.avatar = avatar;
-        if (!admin.googleId) admin.googleId = profile.id;
-        await admin.save();
+        admin = await prisma.admin.update({
+          where: { id: admin.id },
+          data: { avatar, googleId: profile.id }
+        });
         console.log('✏️ Updated admin with avatar/googleId:', admin.email);
       }
 
@@ -156,7 +116,7 @@ passport.serializeUser((user: any, done) => {
 
 passport.deserializeUser(async (id: string, done) => {
   try {
-    const user = await Admin.findById(id);
+    const user = await prisma.admin.findUnique({ where: { id } });
     done(null, user);
   } catch (err) {
     done(err);
@@ -168,7 +128,7 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<void> =
   try {
     const { email, password, rememberMe } = req.body;
 
-    const adminCount = await Admin.countDocuments();
+    const adminCount = await prisma.admin.count();
     if (adminCount === 0 && email === 'admin@adansonia.com' && password === 'password123') {
       const expiresIn = rememberMe ? '30d' : '7d';
       const token = jwt.sign({ id: 'initial', email }, SECRET_KEY, { expiresIn });
@@ -176,7 +136,7 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    const admin = await Admin.findOne({ email });
+    const admin = await prisma.admin.findUnique({ where: { email } });
     if (!admin || !admin.password || !(await bcrypt.compare(password, admin.password))) {
       res.status(401).json({ error: 'Invalid credentials' });
       return;
@@ -236,19 +196,20 @@ app.post('/api/admin/register', verifyToken, async (req: Request, res: Response)
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    const existing = await Admin.findOne({ email });
+    const existing = await prisma.admin.findUnique({ where: { email } });
     if (existing) {
       return res.status(400).json({ error: 'Admin already exists' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const newAdmin = new Admin({
-      email,
-      password: hashedPassword,
-      created_at: new Date(),
-      avatar: null
+    const newAdmin = await prisma.admin.create({
+      data: {
+        email,
+        password: hashedPassword,
+        created_at: new Date(),
+        avatar: null
+      }
     });
-    await newAdmin.save();
 
     res.json({ success: true, email: newAdmin.email });
   } catch (err) {
@@ -259,7 +220,9 @@ app.post('/api/admin/register', verifyToken, async (req: Request, res: Response)
 
 app.get('/api/admin/admins', verifyToken, async (req: Request, res: Response) => {
   try {
-    const admins = await Admin.find().select('-password');
+    const admins = await prisma.admin.findMany({
+      select: { id: true, email: true, avatar: true, created_at: true, googleId: true }
+    });
     res.json(admins);
   } catch (err) {
     console.error('Fetch admins error:', err);
@@ -269,8 +232,7 @@ app.get('/api/admin/admins', verifyToken, async (req: Request, res: Response) =>
 
 app.delete('/api/admin/admins/:id', verifyToken, async (req: Request, res: Response) => {
   try {
-    const result = await Admin.findByIdAndDelete(req.params.id);
-    if (!result) return res.status(404).json({ error: 'Not found' });
+    await prisma.admin.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (err) {
     console.error('Delete admin error:', err);
@@ -281,7 +243,9 @@ app.delete('/api/admin/admins/:id', verifyToken, async (req: Request, res: Respo
 // ========== STAFF ROUTES ==========
 app.get('/api/staff', async (req, res) => {
   try {
-    const staff = await Staff.find().sort({ priority: 1 });
+    const staff = await prisma.staff.findMany({
+      orderBy: { priority: 'asc' }
+    });
     res.json(staff);
   } catch (err) {
     console.error('Fetch staff error:', err);
@@ -291,7 +255,7 @@ app.get('/api/staff', async (req, res) => {
 
 app.get('/api/staff/:id', async (req, res) => {
   try {
-    const member = await Staff.findById(req.params.id);
+    const member = await prisma.staff.findUnique({ where: { id: req.params.id } });
     if (!member) return res.status(404).json({ error: 'Not found' });
     res.json(member);
   } catch (err) {
@@ -302,7 +266,9 @@ app.get('/api/staff/:id', async (req, res) => {
 
 app.get('/api/admin/staff', verifyToken, async (req, res) => {
   try {
-    const staff = await Staff.find().sort({ priority: 1 });
+    const staff = await prisma.staff.findMany({
+      orderBy: { priority: 'asc' }
+    });
     res.json(staff);
   } catch (err) {
     console.error('Fetch admin staff error:', err);
@@ -310,7 +276,7 @@ app.get('/api/admin/staff', verifyToken, async (req, res) => {
   }
 });
 
-// Disable file upload endpoints on Vercel
+// Disable file upload endpoints on Vercel – they need cloud storage
 const isVercel = process.env.VERCEL === '1';
 
 app.post('/api/admin/staff', verifyToken, async (req, res) => {
@@ -329,16 +295,17 @@ app.post('/api/admin/staff', verifyToken, async (req, res) => {
       imageUrl = `${req.protocol}://${req.get('host')}/uploads/${fileName}`;
     }
 
-    const newStaff = new Staff({
-      name,
-      email,
-      role,
-      expertise: expertise || [],
-      priority: priority || 0,
-      image_url: imageUrl,
-      bio
+    const newStaff = await prisma.staff.create({
+      data: {
+        name,
+        email,
+        role,
+        expertise: expertise || [],
+        priority: priority || 0,
+        image_url: imageUrl,
+        bio
+      }
     });
-    await newStaff.save();
     res.json(newStaff);
   } catch (err) {
     console.error('Create staff error:', err);
@@ -360,11 +327,13 @@ app.put('/api/admin/staff/:id', verifyToken, async (req, res) => {
       imageUrl = `${req.protocol}://${req.get('host')}/uploads/${fileName}`;
     }
 
-    const updateData = { ...rest };
+    const updateData: any = { ...rest };
     if (imageUrl) updateData.image_url = imageUrl;
 
-    const updated = await Staff.findByIdAndUpdate(req.params.id, updateData, { new: true });
-    if (!updated) return res.status(404).json({ error: 'Not found' });
+    const updated = await prisma.staff.update({
+      where: { id: req.params.id },
+      data: updateData
+    });
     res.json(updated);
   } catch (err) {
     console.error('Update staff error:', err);
@@ -374,8 +343,7 @@ app.put('/api/admin/staff/:id', verifyToken, async (req, res) => {
 
 app.delete('/api/admin/staff/:id', verifyToken, async (req, res) => {
   try {
-    const deleted = await Staff.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ error: 'Not found' });
+    await prisma.staff.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (err) {
     console.error('Delete staff error:', err);
@@ -386,7 +354,7 @@ app.delete('/api/admin/staff/:id', verifyToken, async (req, res) => {
 // ========== TESTIMONIALS ROUTES ==========
 app.get('/api/testimonials', async (req, res) => {
   try {
-    const testimonials = await Testimonial.find();
+    const testimonials = await prisma.testimonial.findMany();
     res.json(testimonials);
   } catch (err) {
     console.error('Fetch testimonials error:', err);
@@ -396,7 +364,7 @@ app.get('/api/testimonials', async (req, res) => {
 
 app.get('/api/testimonials/:id', async (req, res) => {
   try {
-    const item = await Testimonial.findById(req.params.id);
+    const item = await prisma.testimonial.findUnique({ where: { id: req.params.id } });
     if (!item) return res.status(404).json({ error: 'Not found' });
     res.json(item);
   } catch (err) {
@@ -407,7 +375,7 @@ app.get('/api/testimonials/:id', async (req, res) => {
 
 app.get('/api/admin/testimonials', verifyToken, async (req, res) => {
   try {
-    const testimonials = await Testimonial.find();
+    const testimonials = await prisma.testimonial.findMany();
     res.json(testimonials);
   } catch (err) {
     console.error('Fetch admin testimonials error:', err);
@@ -419,8 +387,9 @@ app.post('/api/admin/testimonials', verifyToken, async (req, res) => {
   try {
     const { name, role, quote, avatar } = req.body;
     if (!name || !quote) return res.status(400).json({ error: 'Name and quote required' });
-    const newItem = new Testimonial({ name, role, quote, avatar });
-    await newItem.save();
+    const newItem = await prisma.testimonial.create({
+      data: { name, role, quote, avatar }
+    });
     res.json(newItem);
   } catch (err) {
     console.error('Create testimonial error:', err);
@@ -430,8 +399,10 @@ app.post('/api/admin/testimonials', verifyToken, async (req, res) => {
 
 app.put('/api/admin/testimonials/:id', verifyToken, async (req, res) => {
   try {
-    const updated = await Testimonial.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!updated) return res.status(404).json({ error: 'Not found' });
+    const updated = await prisma.testimonial.update({
+      where: { id: req.params.id },
+      data: req.body
+    });
     res.json(updated);
   } catch (err) {
     console.error('Update testimonial error:', err);
@@ -441,8 +412,7 @@ app.put('/api/admin/testimonials/:id', verifyToken, async (req, res) => {
 
 app.delete('/api/admin/testimonials/:id', verifyToken, async (req, res) => {
   try {
-    const deleted = await Testimonial.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ error: 'Not found' });
+    await prisma.testimonial.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (err) {
     console.error('Delete testimonial error:', err);
@@ -453,7 +423,9 @@ app.delete('/api/admin/testimonials/:id', verifyToken, async (req, res) => {
 // ========== INSIGHTS ROUTES ==========
 app.get('/api/insights', async (req, res) => {
   try {
-    const insights = await Insight.find().sort({ published_date: -1 });
+    const insights = await prisma.insight.findMany({
+      orderBy: { published_date: 'desc' }
+    });
     res.json(insights);
   } catch (err) {
     console.error('Fetch insights error:', err);
@@ -463,7 +435,7 @@ app.get('/api/insights', async (req, res) => {
 
 app.get('/api/insights/:id', async (req, res) => {
   try {
-    const insight = await Insight.findById(req.params.id);
+    const insight = await prisma.insight.findUnique({ where: { id: req.params.id } });
     if (!insight) return res.status(404).json({ error: 'Not found' });
     res.json(insight);
   } catch (err) {
@@ -474,7 +446,9 @@ app.get('/api/insights/:id', async (req, res) => {
 
 app.get('/api/admin/insights', verifyToken, async (req, res) => {
   try {
-    const insights = await Insight.find().sort({ published_date: -1 });
+    const insights = await prisma.insight.findMany({
+      orderBy: { published_date: 'desc' }
+    });
     res.json(insights);
   } catch (err) {
     console.error('Fetch admin insights error:', err);
@@ -498,16 +472,17 @@ app.post('/api/admin/insights', verifyToken, async (req, res) => {
       imageUrl = `${req.protocol}://${req.get('host')}/uploads/${fileName}`;
     }
 
-    const newInsight = new Insight({
-      title,
-      content,
-      published_date: published_date || new Date().toISOString().split('T')[0],
-      published: published !== undefined ? published : true,
-      category: category || '',
-      tags: tags ? (Array.isArray(tags) ? tags : tags.split(',').map((t: string) => t.trim())) : [],
-      image_url: imageUrl,
+    const newInsight = await prisma.insight.create({
+      data: {
+        title,
+        content,
+        published_date: published_date ? new Date(published_date) : new Date(),
+        published: published !== undefined ? published : true,
+        category: category || '',
+        tags: tags ? (Array.isArray(tags) ? tags : tags.split(',').map((t: string) => t.trim())) : [],
+        image_url: imageUrl
+      }
     });
-    await newInsight.save();
     res.json(newInsight);
   } catch (err) {
     console.error('Create insight error:', err);
@@ -528,11 +503,14 @@ app.put('/api/admin/insights/:id', verifyToken, async (req, res) => {
       fs.writeFileSync(path.join(uploadsDir, fileName), base64Data, 'base64');
       imageUrl = `${req.protocol}://${req.get('host')}/uploads/${fileName}`;
     }
-    const updateData = { ...rest };
+
+    const updateData: any = { ...rest };
     if (imageUrl) updateData.image_url = imageUrl;
 
-    const updated = await Insight.findByIdAndUpdate(req.params.id, updateData, { new: true });
-    if (!updated) return res.status(404).json({ error: 'Not found' });
+    const updated = await prisma.insight.update({
+      where: { id: req.params.id },
+      data: updateData
+    });
     res.json(updated);
   } catch (err) {
     console.error('Update insight error:', err);
@@ -542,8 +520,7 @@ app.put('/api/admin/insights/:id', verifyToken, async (req, res) => {
 
 app.delete('/api/admin/insights/:id', verifyToken, async (req, res) => {
   try {
-    const deleted = await Insight.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ error: 'Not found' });
+    await prisma.insight.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (err) {
     console.error('Delete insight error:', err);
@@ -554,7 +531,9 @@ app.delete('/api/admin/insights/:id', verifyToken, async (req, res) => {
 // ========== CAPABILITIES ROUTES ==========
 app.get('/api/capabilities', async (req, res) => {
   try {
-    const caps = await Capability.find().sort({ priority: 1 });
+    const caps = await prisma.capability.findMany({
+      orderBy: { priority: 'asc' }
+    });
     res.json(caps);
   } catch (err) {
     console.error('Fetch capabilities error:', err);
@@ -564,7 +543,7 @@ app.get('/api/capabilities', async (req, res) => {
 
 app.get('/api/capabilities/:id', async (req, res) => {
   try {
-    const item = await Capability.findById(req.params.id);
+    const item = await prisma.capability.findUnique({ where: { id: req.params.id } });
     if (!item) return res.status(404).json({ error: 'Not found' });
     res.json(item);
   } catch (err) {
@@ -575,7 +554,9 @@ app.get('/api/capabilities/:id', async (req, res) => {
 
 app.get('/api/admin/capabilities', verifyToken, async (req, res) => {
   try {
-    const caps = await Capability.find().sort({ priority: 1 });
+    const caps = await prisma.capability.findMany({
+      orderBy: { priority: 'asc' }
+    });
     res.json(caps);
   } catch (err) {
     console.error('Fetch admin capabilities error:', err);
@@ -587,8 +568,9 @@ app.post('/api/admin/capabilities', verifyToken, async (req, res) => {
   try {
     const { title, description, icon, priority } = req.body;
     if (!title) return res.status(400).json({ error: 'Title required' });
-    const newItem = new Capability({ title, description, icon, priority });
-    await newItem.save();
+    const newItem = await prisma.capability.create({
+      data: { title, description, icon, priority: priority || 0 }
+    });
     res.json(newItem);
   } catch (err) {
     console.error('Create capability error:', err);
@@ -598,8 +580,10 @@ app.post('/api/admin/capabilities', verifyToken, async (req, res) => {
 
 app.put('/api/admin/capabilities/:id', verifyToken, async (req, res) => {
   try {
-    const updated = await Capability.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!updated) return res.status(404).json({ error: 'Not found' });
+    const updated = await prisma.capability.update({
+      where: { id: req.params.id },
+      data: req.body
+    });
     res.json(updated);
   } catch (err) {
     console.error('Update capability error:', err);
@@ -609,8 +593,7 @@ app.put('/api/admin/capabilities/:id', verifyToken, async (req, res) => {
 
 app.delete('/api/admin/capabilities/:id', verifyToken, async (req, res) => {
   try {
-    const deleted = await Capability.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ error: 'Not found' });
+    await prisma.capability.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (err) {
     console.error('Delete capability error:', err);
@@ -621,7 +604,7 @@ app.delete('/api/admin/capabilities/:id', verifyToken, async (req, res) => {
 // ========== CASE STUDIES ROUTES ==========
 app.get('/api/case-studies', async (req, res) => {
   try {
-    const studies = await CaseStudy.find();
+    const studies = await prisma.caseStudy.findMany();
     res.json(studies);
   } catch (err) {
     console.error('Fetch case studies error:', err);
@@ -631,7 +614,7 @@ app.get('/api/case-studies', async (req, res) => {
 
 app.get('/api/case-studies/:id', async (req, res) => {
   try {
-    const item = await CaseStudy.findById(req.params.id);
+    const item = await prisma.caseStudy.findUnique({ where: { id: req.params.id } });
     if (!item) return res.status(404).json({ error: 'Not found' });
     res.json(item);
   } catch (err) {
@@ -642,7 +625,7 @@ app.get('/api/case-studies/:id', async (req, res) => {
 
 app.get('/api/admin/case-studies', verifyToken, async (req, res) => {
   try {
-    const studies = await CaseStudy.find();
+    const studies = await prisma.caseStudy.findMany();
     res.json(studies);
   } catch (err) {
     console.error('Fetch admin case studies error:', err);
@@ -666,15 +649,16 @@ app.post('/api/admin/case-studies', verifyToken, async (req, res) => {
       imageUrl = `${req.protocol}://${req.get('host')}/uploads/${fileName}`;
     }
 
-    const newItem = new CaseStudy({
-      title,
-      description,
-      practiceArea,
-      image_url: imageUrl,
-      client,
-      outcome
+    const newItem = await prisma.caseStudy.create({
+      data: {
+        title,
+        description,
+        practiceArea,
+        image_url: imageUrl,
+        client,
+        outcome
+      }
     });
-    await newItem.save();
     res.json(newItem);
   } catch (err) {
     console.error('Create case study error:', err);
@@ -695,11 +679,14 @@ app.put('/api/admin/case-studies/:id', verifyToken, async (req, res) => {
       fs.writeFileSync(path.join(uploadsDir, fileName), base64Data, 'base64');
       imageUrl = `${req.protocol}://${req.get('host')}/uploads/${fileName}`;
     }
-    const updateData = { ...rest };
+
+    const updateData: any = { ...rest };
     if (imageUrl) updateData.image_url = imageUrl;
 
-    const updated = await CaseStudy.findByIdAndUpdate(req.params.id, updateData, { new: true });
-    if (!updated) return res.status(404).json({ error: 'Not found' });
+    const updated = await prisma.caseStudy.update({
+      where: { id: req.params.id },
+      data: updateData
+    });
     res.json(updated);
   } catch (err) {
     console.error('Update case study error:', err);
@@ -709,8 +696,7 @@ app.put('/api/admin/case-studies/:id', verifyToken, async (req, res) => {
 
 app.delete('/api/admin/case-studies/:id', verifyToken, async (req, res) => {
   try {
-    const deleted = await CaseStudy.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ error: 'Not found' });
+    await prisma.caseStudy.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (err) {
     console.error('Delete case study error:', err);
@@ -723,8 +709,9 @@ app.post('/api/contact', async (req, res) => {
   try {
     const { name, email, message } = req.body;
     if (!name || !email || !message) return res.status(400).json({ error: 'Missing fields' });
-    const newMessage = new ContactMessage({ name, email, message });
-    await newMessage.save();
+    const newMessage = await prisma.contactMessage.create({
+      data: { name, email, message }
+    });
     res.json({ success: true, id: newMessage.id });
   } catch (err) {
     console.error('Contact form error:', err);
@@ -734,7 +721,9 @@ app.post('/api/contact', async (req, res) => {
 
 app.get('/api/admin/contact', verifyToken, async (req, res) => {
   try {
-    const messages = await ContactMessage.find().sort({ created_at: -1 });
+    const messages = await prisma.contactMessage.findMany({
+      orderBy: { created_at: 'desc' }
+    });
     res.json(messages);
   } catch (err) {
     console.error('Fetch messages error:', err);
@@ -744,8 +733,7 @@ app.get('/api/admin/contact', verifyToken, async (req, res) => {
 
 app.delete('/api/admin/contact/:id', verifyToken, async (req, res) => {
   try {
-    const deleted = await ContactMessage.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ error: 'Not found' });
+    await prisma.contactMessage.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (err) {
     console.error('Delete message error:', err);

@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Admins table
+model Admin {
+  id         String   @id @default(cuid())
+  email      String   @unique
+  password   String?  // hashed password, nullable for Google OAuth users
+  avatar     String?
+  googleId   String?  @unique
+  created_at DateTime @default(now())
+
+  @@map("admins")
+}
+
+// Staff table
+model Staff {
+  id        String   @id @default(cuid())
+  name      String
+  email     String?
+  role      String?
+  expertise Json?    // will store array as JSON
+  priority  Int      @default(0)
+  image_url String?
+  bio       String?
+
+  @@map("staff")
+}
+
+// Testimonials table
+model Testimonial {
+  id     String  @id @default(cuid())
+  name   String
+  role   String?
+  quote  String
+  avatar String?
+
+  @@map("testimonials")
+}
+
+// Insights table
+model Insight {
+  id             String   @id @default(cuid())
+  title          String
+  content        String
+  published_date DateTime @default(now())
+  published      Boolean  @default(true)
+  category       String?
+  tags           Json?    // array stored as JSON
+  image_url      String?
+
+  @@map("insights")
+}
+
+// Capabilities table
+model Capability {
+  id          String  @id @default(cuid())
+  title       String
+  description String?
+  icon        String?
+  priority    Int     @default(0)
+
+  @@map("capabilities")
+}
+
+// CaseStudy table
+model CaseStudy {
+  id           String  @id @default(cuid())
+  title        String
+  description  String?
+  practiceArea String?
+  image_url    String?
+  client       String?
+  outcome      String?
+
+  @@map("case_studies")
+}
+
+// ContactMessage table
+model ContactMessage {
+  id         String   @id @default(cuid())
+  name       String
+  email      String
+  message    String
+  created_at DateTime @default(now())
+
+  @@map("contact_messages")
+}
