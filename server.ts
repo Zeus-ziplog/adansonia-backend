@@ -32,16 +32,23 @@ const ADMIN_FRONTEND_URL = process.env.ADMIN_FRONTEND_URL || 'http://localhost:5
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ========== MongoDB Connection ==========
+// ========== MongoDB Connection with Timeout ==========
 const MONGODB_URI = process.env.MONGODB_URI;
 if (!MONGODB_URI) {
   console.error('❌ MONGODB_URI environment variable is not defined');
-  process.exit(1);
+  // Don't exit – we'll handle it in requests
+} else {
+  // Set connection timeout to 10 seconds
+  mongoose.connect(MONGODB_URI, {
+    serverSelectionTimeoutMS: 10000, // Timeout after 10s
+    socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
+  })
+    .then(() => console.log('✅ Connected to MongoDB'))
+    .catch(err => {
+      console.error('❌ MongoDB connection error:', err.message);
+      // Don't exit – let the function start, but requests will fail gracefully
+    });
 }
-
-mongoose.connect(MONGODB_URI)
-  .then(() => console.log('✅ Connected to MongoDB'))
-  .catch(err => console.error('❌ MongoDB connection error:', err));
 
 // ========== Middleware ==========
 app.use(cors());
@@ -57,12 +64,16 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ========== TEST ROUTE FOR DEPLOYMENT VERIFICATION ==========
+// ========== TEST ROUTE ==========
 app.get('/', (req, res) => {
+  // Check if MongoDB is connected
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: 'Database not connected' });
+  }
   res.send('✅ Adansonia backend is live on Vercel!');
 });
 
-// ========== Uploads directory – handle gracefully on Vercel ==========
+// ========== Uploads directory – handle gracefully ==========
 const uploadsDir = path.join(__dirname, 'uploads');
 try {
   if (!fs.existsSync(uploadsDir)) {
@@ -73,6 +84,17 @@ try {
   console.warn('⚠️ Could not create uploads directory. File uploads will not work on Vercel.', err);
 }
 app.use('/uploads', express.static(uploadsDir));
+
+// ========== Middleware to check DB connection for API routes ==========
+const checkDbConnection = (req: Request, res: Response, next: NextFunction) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: 'Database not connected' });
+  }
+  next();
+};
+
+// Apply DB check to all API routes (except maybe auth routes that don't need DB? but most do)
+app.use('/api', checkDbConnection);
 
 // ========== Auth Middleware ==========
 const verifyToken = (req: Request, res: Response, next: NextFunction): void => {
@@ -288,7 +310,7 @@ app.get('/api/admin/staff', verifyToken, async (req, res) => {
   }
 });
 
-// Disable file upload endpoints on Vercel – they need cloud storage
+// Disable file upload endpoints on Vercel
 const isVercel = process.env.VERCEL === '1';
 
 app.post('/api/admin/staff', verifyToken, async (req, res) => {
@@ -779,7 +801,7 @@ If the question is about a specific topic, try to include a relevant page sugges
   }
 });
 
-// ========== Global error handler (optional) ==========
+// ========== Global error handler ==========
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   console.error('🔥 Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
