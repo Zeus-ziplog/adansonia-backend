@@ -47,7 +47,6 @@ mongoose.connect(MONGODB_URI)
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Use a real session store in production (like connect-mongo) – for now, this warning is okay
 app.use(session({
   secret: process.env.SESSION_SECRET || 'your-session-secret',
   resave: false,
@@ -73,7 +72,6 @@ try {
 } catch (err) {
   console.warn('⚠️ Could not create uploads directory. File uploads will not work on Vercel.', err);
 }
-// Still serve static files if the folder exists (won't on Vercel)
 app.use('/uploads', express.static(uploadsDir));
 
 // ========== Auth Middleware ==========
@@ -788,7 +786,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 });
 
 // ========== Export serverless handler ==========
-export const handler = serverless(app);
+export default serverless(app);
 
 // ========== Start local server for development ==========
 if (process.env.NODE_ENV !== 'production') {
