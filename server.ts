@@ -17,6 +17,22 @@ dotenv.config();
 
 const app = express();
 const prisma = new PrismaClient();
+
+// Test database connection immediately (logs to Vercel)
+(async () => {
+  try {
+    await Promise.race([
+      prisma.$connect(),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Connection timeout after 10 seconds')), 10000)
+      )
+    ]);
+    console.log('✅ Prisma connected to Supabase');
+  } catch (err) {
+    console.error('❌ Prisma connection error:', err);
+  }
+})();
+
 const PORT = process.env.PORT || 5000;
 const SECRET_KEY = process.env.JWT_SECRET || 'adansonia-secret-key-2024';
 const ADMIN_FRONTEND_URL = process.env.ADMIN_FRONTEND_URL || 'http://localhost:5173';
@@ -41,6 +57,11 @@ app.use(passport.session());
 // ========== TEST ROUTE ==========
 app.get('/', (req, res) => {
   res.send('✅ Adansonia backend is live on Vercel!');
+});
+
+// Simple ping route to test function without DB
+app.get('/ping', (req, res) => {
+  res.send('pong');
 });
 
 // ========== Uploads directory – handle gracefully on Vercel ==========
