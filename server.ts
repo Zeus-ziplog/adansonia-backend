@@ -40,6 +40,18 @@ const ADMIN_FRONTEND_URL = process.env.ADMIN_FRONTEND_URL || 'http://localhost:5
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// ========== REQUEST LOGGER (adds visibility) ==========
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
+
+// ========== SIMPLE PING ROUTE (no middleware, no DB) ==========
+app.get('/ping', (req, res) => {
+  console.log('Ping route hit');
+  res.send('pong');
+});
+
 // ========== Middleware ==========
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -56,12 +68,8 @@ app.use(passport.session());
 
 // ========== TEST ROUTE ==========
 app.get('/', (req, res) => {
+  console.log('Root route hit');
   res.send('✅ Adansonia backend is live on Vercel!');
-});
-
-// Simple ping route to test function without DB
-app.get('/ping', (req, res) => {
-  res.send('pong');
 });
 
 // ========== Uploads directory – handle gracefully on Vercel ==========
