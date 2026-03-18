@@ -46,6 +46,19 @@ app.get('/health', (req, res) => {
   res.send('OK');
 });
 
+// ========== TEST DATABASE ROUTE ==========
+app.get('/test-db', async (req, res) => {
+  try {
+    console.log('Test-db route hit');
+    const result = await prisma.$queryRaw`SELECT 1 as test`;
+    console.log('Test-db query succeeded');
+    res.json({ success: true, result });
+  } catch (err) {
+    console.error('Test-db error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ========== REQUEST LOGGER ==========
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
