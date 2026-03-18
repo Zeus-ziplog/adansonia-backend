@@ -40,13 +40,19 @@ const ADMIN_FRONTEND_URL = process.env.ADMIN_FRONTEND_URL || 'http://localhost:5
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ========== REQUEST LOGGER (adds visibility) ==========
+// ========== HEALTH CHECK ROUTE (no middleware) ==========
+app.get('/health', (req, res) => {
+  console.log('Health route hit');
+  res.send('OK');
+});
+
+// ========== REQUEST LOGGER ==========
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
-// ========== SIMPLE PING ROUTE (no middleware, no DB) ==========
+// ========== SIMPLE PING ROUTE ==========
 app.get('/ping', (req, res) => {
   console.log('Ping route hit');
   res.send('pong');
