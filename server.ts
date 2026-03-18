@@ -40,6 +40,9 @@ const ADMIN_FRONTEND_URL = process.env.ADMIN_FRONTEND_URL || 'http://localhost:5
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// ========== Vercel Environment Check ==========
+const isVercel = process.env.VERCEL === '1';
+
 // ========== HEALTH CHECK ROUTE (no middleware) ==========
 app.get('/health', (req, res) => {
   console.log('Health route hit');
@@ -79,7 +82,10 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'your-session-secret',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: process.env.NODE_ENV === 'production' }
+  cookie: { 
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
+  }
 }));
 
 app.use(passport.initialize());
@@ -92,14 +98,16 @@ app.get('/', (req, res) => {
 });
 
 // ========== Uploads directory – handle gracefully on Vercel ==========
-const uploadsDir = path.join(__dirname, 'uploads');
-try {
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-    console.log('✅ Uploads directory created at', uploadsDir);
+const uploadsDir = path.join(process.cwd(), 'uploads');
+if (!isVercel) {
+  try {
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+      console.log('✅ Local uploads directory ready');
+    }
+  } catch (err) {
+    console.warn('⚠️ File system notice:', err.message);
   }
-} catch (err) {
-  console.warn('⚠️ Could not create uploads directory. File uploads will not work on Vercel.', err);
 }
 app.use('/uploads', express.static(uploadsDir));
 
@@ -323,9 +331,6 @@ app.get('/api/admin/staff', verifyToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch staff' });
   }
 });
-
-// Disable file upload endpoints on Vercel – they need cloud storage
-const isVercel = process.env.VERCEL === '1';
 
 app.post('/api/admin/staff', verifyToken, async (req, res) => {
   if (isVercel) {
