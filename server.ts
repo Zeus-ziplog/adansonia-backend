@@ -16,22 +16,7 @@ import { PrismaClient } from '@prisma/client';
 dotenv.config();
 
 const app = express();
-const prisma = new PrismaClient();
-
-// Test database connection immediately (logs to Vercel)
-(async () => {
-  try {
-    await Promise.race([
-      prisma.$connect(),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Connection timeout after 10 seconds')), 10000)
-      )
-    ]);
-    console.log('✅ Prisma connected to Supabase');
-  } catch (err) {
-    console.error('❌ Prisma connection error:', err);
-  }
-})();
+const prisma = new PrismaClient(); // Lazy: connects on first query
 
 const PORT = process.env.PORT || 5000;
 const SECRET_KEY = process.env.JWT_SECRET || 'adansonia-secret-key-2024';
@@ -239,7 +224,7 @@ app.get('/api/auth/google/callback',
       );
     } catch (err) {
       console.error('🔥 Error in callback handler:', err);
-      res.status(500).json({ error: 'Internal server error' });
+      res.redirect(`${ADMIN_FRONTEND_URL}/login?error=auth_failed`);
     }
   }
 );
@@ -341,7 +326,7 @@ app.post('/api/admin/staff', verifyToken, async (req, res) => {
     if (!name) return res.status(400).json({ error: 'Name required' });
 
     let imageUrl = '';
-    if (image_base64?.includes('base64')) {
+    if (image_base64?.includes('base64') && !isVercel) {
       const fileName = `advocate_${Date.now()}.png`;
       const base64Data = image_base64.replace(/^data:image\/\w+;base64,/, "");
       fs.writeFileSync(path.join(uploadsDir, fileName), base64Data, 'base64');
@@ -373,7 +358,7 @@ app.put('/api/admin/staff/:id', verifyToken, async (req, res) => {
   try {
     const { image_base64, ...rest } = req.body;
     let imageUrl;
-    if (image_base64?.includes('base64')) {
+    if (image_base64?.includes('base64') && !isVercel) {
       const fileName = `advocate_${Date.now()}.png`;
       const base64Data = image_base64.replace(/^data:image\/\w+;base64,/, "");
       fs.writeFileSync(path.join(uploadsDir, fileName), base64Data, 'base64');
@@ -518,7 +503,7 @@ app.post('/api/admin/insights', verifyToken, async (req, res) => {
     if (!title || !content) return res.status(400).json({ error: 'Title and content required' });
 
     let imageUrl = '';
-    if (image_base64?.includes('base64')) {
+    if (image_base64?.includes('base64') && !isVercel) {
       const fileName = `insight_${Date.now()}.png`;
       const base64Data = image_base64.replace(/^data:image\/\w+;base64,/, "");
       fs.writeFileSync(path.join(uploadsDir, fileName), base64Data, 'base64');
@@ -550,7 +535,7 @@ app.put('/api/admin/insights/:id', verifyToken, async (req, res) => {
   try {
     const { image_base64, ...rest } = req.body;
     let imageUrl;
-    if (image_base64?.includes('base64')) {
+    if (image_base64?.includes('base64') && !isVercel) {
       const fileName = `insight_${Date.now()}.png`;
       const base64Data = image_base64.replace(/^data:image\/\w+;base64,/, "");
       fs.writeFileSync(path.join(uploadsDir, fileName), base64Data, 'base64');
@@ -695,7 +680,7 @@ app.post('/api/admin/case-studies', verifyToken, async (req, res) => {
     if (!title || !description) return res.status(400).json({ error: 'Title and description required' });
 
     let imageUrl = '';
-    if (image_base64?.includes('base64')) {
+    if (image_base64?.includes('base64') && !isVercel) {
       const fileName = `casestudy_${Date.now()}.png`;
       const base64Data = image_base64.replace(/^data:image\/\w+;base64,/, "");
       fs.writeFileSync(path.join(uploadsDir, fileName), base64Data, 'base64');
@@ -726,7 +711,7 @@ app.put('/api/admin/case-studies/:id', verifyToken, async (req, res) => {
   try {
     const { image_base64, ...rest } = req.body;
     let imageUrl;
-    if (image_base64?.includes('base64')) {
+    if (image_base64?.includes('base64') && !isVercel) {
       const fileName = `casestudy_${Date.now()}.png`;
       const base64Data = image_base64.replace(/^data:image\/\w+;base64,/, "");
       fs.writeFileSync(path.join(uploadsDir, fileName), base64Data, 'base64');
