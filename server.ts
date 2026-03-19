@@ -2,9 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
-import Groq from 'groq-sdk';
 import dotenv from 'dotenv';
-import session from 'express-session';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import serverless from 'serverless-http';
@@ -44,20 +42,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// Session (needed for Passport)
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'adansonia-session-secret',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: true,
-    sameSite: 'none',
-    maxAge: 24 * 60 * 60 * 1000,
-  },
-}));
-
+// NO SESSION MIDDLEWARE – we use JWT exclusively
 app.use(passport.initialize());
-app.use(passport.session());
 
 // ========== 4. CLOUDINARY UPLOAD HELPER ==========
 const uploadToCloudinary = async (base64String: string, folder: string): Promise<string | null> => {
@@ -118,15 +104,7 @@ passport.use(new GoogleStrategy({
   }
 }));
 
-passport.serializeUser((user: any, done) => done(null, user.id));
-passport.deserializeUser(async (id: string, done) => {
-  try {
-    const user = await prisma.admin.findUnique({ where: { id } });
-    done(null, user);
-  } catch (err) {
-    done(err);
-  }
-});
+// No serialize/deserialize – we don't use sessions
 
 // ========== 7. DIAGNOSTIC ROUTES ==========
 app.get('/health', (req, res) => res.send('OK'));
@@ -161,10 +139,18 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.get('/api/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+app.get('/api/auth/google',
+  passport.authenticate('google', {
+    scope: ['profile', 'email'],
+    session: false   // ← critical: no session
+  })
+);
 
 app.get('/api/auth/google/callback',
-  passport.authenticate('google', { failureRedirect: `${ADMIN_FRONTEND_URL}/login`, session: false }),
+  passport.authenticate('google', {
+    failureRedirect: `${ADMIN_FRONTEND_URL}/login?error=oauth_failed`,
+    session: false   // ← critical: no session
+  }),
   (req, res) => {
     try {
       const user = req.user as any;
@@ -530,12 +516,15 @@ app.delete('/api/admin/contact/:id', verifyToken, async (req, res) => {
   res.json({ success: true });
 });
 
-// ========== 16. AI ASSISTANT ==========
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
+// ========== 16. AI ASSISTANT (with dynamic import) ==========
 app.post('/api/assistant', async (req, res) => {
   try {
     const { message } = req.body;
     if (!message) return res.status(400).json({ error: 'Message required' });
+
+    // Dynamically import Groq only when this route is hit
+    const { default: Groq } = await import('groq-sdk');
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
 
     const systemPrompt = `You are a helpful assistant for the law firm "Adansonia Kiamba Mbithi & Co. Advocates". 
 Answer the user's question using your general knowledge. If you need to suggest a page, use the list below.
