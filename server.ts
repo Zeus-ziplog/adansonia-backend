@@ -1,16 +1,14 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
-import passport from 'passport';
-import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { PrismaClient } from '@prisma/client';
 
 dotenv.config();
 
 // ========== 1. PRISMA SERVERLESS OPTIMIZATION ==========
-// This prevents "too many clients" errors during Vercel hot-reloads
+// Prevents "Too many clients" errors by reusing the connection across warm lambda hits
 const globalForPrisma = global as unknown as { prisma: PrismaClient };
 export const prisma = globalForPrisma.prisma || new PrismaClient({
   log: ['error'],
@@ -26,25 +24,19 @@ app.use(cors({
   origin: [ADMIN_FRONTEND_URL, 'https://adansonia-admin.vercel.app'],
   credentials: true,
 }));
-app.use(express.json({ limit: '10mb' })); // 50mb is too heavy for serverless, 10mb is safer
+app.use(express.json({ limit: '10mb' })); // Safer limit for serverless payloads
 
-// Passport Setup (Strictly Stateless)
-app.use(passport.initialize());
-
-// ========== 3. HELPERS (LAZY LOADED) ==========
-const getCloudinary = async () => {
-  const { v2: cloudinary } = await import('cloudinary');
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-  });
-  return cloudinary;
-};
-
+// ========== 3. HELPERS (DYNAMICALLY IMPORTED) ==========
 const uploadToCloudinary = async (base64String: string, folder: string): Promise<string | null> => {
   try {
-    const cloudinary = await getCloudinary();
+    // Heavy Cloudinary SDK is only loaded when an actual upload occurs
+    const { v2: cloudinary } = await import('cloudinary');
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+    });
+    
     const uploadResponse = await cloudinary.uploader.upload(base64String, {
       folder: `adansonia/${folder}`,
     });
@@ -71,37 +63,46 @@ const verifyToken = (req: Request, res: Response, next: NextFunction): void => {
   }
 };
 
-// ========== 5. PASSPORT GOOGLE STRATEGY ==========
-passport.use(new GoogleStrategy({
-  clientID: process.env.GOOGLE_CLIENT_ID!,
-  clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-  callbackURL: process.env.GOOGLE_CALLBACK_URL,
-}, async (_accessToken, _refreshToken, profile, done) => {
-  try {
-    const email = profile.emails?.[0]?.value;
-    if (!email) return done(null, false);
+// ========== 5. DYNAMIC PASSPORT INITIALIZATION ==========
+const initPassport = async () => {
+  const { default: passport } = await import('passport');
+  const { Strategy: GoogleStrategy } = await import('passport-google-oauth20');
 
-    let admin = await prisma.admin.findUnique({ where: { email } });
-    if (!admin) return done(null, false); // Reject if not in DB
+  // Clear to avoid duplicate strategy errors on hot-reload/re-invocations
+  passport.unuse('google');
 
-    const avatar = profile.photos?.[0]?.value;
-    if (avatar && admin.avatar !== avatar) {
-      admin = await prisma.admin.update({
-        where: { id: admin.id },
-        data: { avatar, googleId: profile.id },
-      });
+  passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID!,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    callbackURL: process.env.GOOGLE_CALLBACK_URL,
+  }, async (_accessToken, _refreshToken, profile, done) => {
+    try {
+      const email = profile.emails?.[0]?.value;
+      if (!email) return done(null, false);
+
+      let admin = await prisma.admin.findUnique({ where: { email } });
+      if (!admin) return done(null, false); // Reject if not in database
+
+      const avatar = profile.photos?.[0]?.value;
+      if (avatar && admin.avatar !== avatar) {
+        admin = await prisma.admin.update({
+          where: { id: admin.id },
+          data: { avatar, googleId: profile.id },
+        });
+      }
+      return done(null, admin);
+    } catch (err) {
+      return done(err as Error);
     }
-    return done(null, admin);
-  } catch (err) {
-    return done(err as Error);
-  }
-}));
+  }));
+  return passport;
+};
 
-// ========== 6. ROUTES (CORE & DIAGNOSTIC) ==========
-app.get('/', (req, res) => res.send('✅ Adansonia Backend Optimized (fra1)'));
+// ========== 6. DIAGNOSTIC ROUTES ==========
+app.get('/', (req, res) => res.send('✅ Adansonia Backend Optimized (Vercel Ready)'));
 app.get('/health', (req, res) => res.status(200).json({ status: 'OK' }));
 
-// ========== 7. AUTH LOGIC ==========
+// ========== 7. AUTHENTICATION ROUTES ==========
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password, rememberMe } = req.body;
@@ -120,22 +121,29 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.get('/api/auth/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }));
+app.get('/api/auth/google', async (req, res, next) => {
+  const passport = await initPassport();
+  passport.authenticate('google', { scope: ['profile', 'email'], session: false })(req, res, next);
+});
 
-app.get('/api/auth/google/callback',
-  passport.authenticate('google', { failureRedirect: `${ADMIN_FRONTEND_URL}/login?error=oauth_failed`, session: false }),
-  (req, res) => {
-    const user = req.user as any;
+app.get('/api/auth/google/callback', async (req, res, next) => {
+  const passport = await initPassport();
+  passport.authenticate('google', { 
+    failureRedirect: `${ADMIN_FRONTEND_URL}/login?error=oauth_failed`, 
+    session: false 
+  }, (err: any, user: any) => {
+    if (err || !user) return res.redirect(`${ADMIN_FRONTEND_URL}/login?error=oauth_failed`);
+    
     const token = jwt.sign(
       { id: user.id, email: user.email, avatar: user.avatar },
       SECRET_KEY,
       { expiresIn: '7d' }
     );
     res.redirect(`${ADMIN_FRONTEND_URL}/login?token=${token}&email=${encodeURIComponent(user.email)}&avatar=${encodeURIComponent(user.avatar || '')}`);
-  }
-);
+  })(req, res, next);
+});
 
-// ========== 8. ADMIN & STAFF MGMT ==========
+// ========== 8. ADMIN & STAFF MANAGEMENT ==========
 app.post('/api/admin/register', verifyToken, async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -205,7 +213,7 @@ app.post('/api/admin/insights', verifyToken, async (req, res) => {
   }
 });
 
-// ========== 10. AI ASSISTANT (LAZY IMPORT) ==========
+// ========== 10. AI ASSISTANT (DYNAMIC GROQ IMPORT) ==========
 app.post('/api/assistant', async (req, res) => {
   try {
     const { message } = req.body;
@@ -227,7 +235,6 @@ app.post('/api/assistant', async (req, res) => {
 });
 
 // ========== 11. EXPORTS ==========
-// Critical for Vercel: Export the app directly
 export default app;
 
 if (process.env.NODE_ENV !== 'production') {

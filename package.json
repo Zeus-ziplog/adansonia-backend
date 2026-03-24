@@ -1,10 +1,11 @@
 {
-  "name": "server",
+  "name": "adansonia-backend",
   "version": "1.0.0",
   "main": "dist/server.js",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "npx prisma generate && tsc",
+    "vercel-build": "npx prisma generate && tsc",
     "start": "node dist/server.js",
     "dev": "nodemon --exec npx tsx server.ts",
     "postinstall": "prisma generate"
@@ -16,12 +17,12 @@
     "@langchain/textsplitters": "^1.0.1",
     "@prisma/client": "^6.19.2",
     "@xenova/transformers": "^2.17.2",
-    "bcrypt": "^5.1.1",
+    "bcryptjs": "^2.4.3",
     "chromadb": "^3.3.1",
     "cloudinary": "^2.9.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
-    "express": "^4.18.2",
+    "express": "^4.19.2",
     "express-session": "^1.19.0",
     "groq-sdk": "^0.37.0",
     "jsonwebtoken": "^9.0.2",
@@ -31,17 +32,17 @@
     "serverless-http": "^4.0.0"
   },
   "devDependencies": {
-    "@types/bcrypt": "^5.0.2",
+    "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.25",
     "@types/express-session": "^1.18.2",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/node": "^20.11.0",
+    "@types/node": "^20.12.7",
     "@types/passport": "^1.0.17",
     "@types/passport-google-oauth20": "^2.0.17",
     "nodemon": "^3.1.14",
     "prisma": "^6.19.2",
     "tsx": "^4.7.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.4.5"
   }
 }
