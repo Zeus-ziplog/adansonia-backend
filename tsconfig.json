@@ -13,6 +13,6 @@
     "resolveJsonModule": true,
     "allowJs": true
   },
-  "include": ["**/*.ts"],
+  "include": ["**/*.ts", "src/lib/prisma.config.ts.bak"],
   "exclude": ["node_modules", "dist"]
 }

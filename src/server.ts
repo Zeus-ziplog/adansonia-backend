@@ -1,9 +1,6 @@
-// This is your new entry point that connects the modules
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-
-// Import your new modular routes
 import authRoutes from './src/routes/auth.js';
 import staffRoutes from './src/routes/staff.js';
 import aiRoutes from './src/routes/ai.js';
@@ -17,18 +14,11 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 
-// Health Check
-app.get('/health', (req, res) => res.status(200).send('✅ Adansonia Modular API is Live'));
-
-// Route Handlers
+// Plug in the modular routes
 app.use('/api/auth', authRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/ai', aiRoutes);
 
-export default app;
+app.get('/health', (req, res) => res.status(200).send('✅ Adansonia API Modular System Online'));
 
-// Local development support
-if (process.env.NODE_ENV !== 'production') {
-  const PORT = process.env.PORT || 5000;
-  app.listen(PORT, () => console.log(`🚀 Server running locally on port ${PORT}`));
-}
+export default app;
